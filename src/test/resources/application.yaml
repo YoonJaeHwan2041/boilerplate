@@ -1,0 +1,19 @@
+# 테스트 전용 설정 — 도커/PostgreSQL 없이 인메모리 H2 로 돈다.
+# (src/test/resources 가 클래스패스에서 우선하므로 main 의 application.yaml 을 덮어쓴다.)
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+
+jwt:
+  secret: test-only-secret-0123456789-0123456789-0123456789-0123456789
+  issuer: boilerplate
+  access-token-validity-seconds: 1800

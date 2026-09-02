@@ -1,0 +1,122 @@
+HELP.md
+.gradle
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### VS Code ###
+.vscode/
+
+########################################################################
+# 아래는 앞으로 브랜치가 늘어나며 생길 것들을 미리 대비한 항목
+########################################################################
+
+### 환경 변수 / 시크릿 ###
+# JWT_SECRET, DB 비밀번호, AWS 키 등은 커밋 금지. 예시 파일(.env.example)만 올린다.
+.env
+.env.*
+!.env.example
+
+### 로컬 전용 설정 (application-{profile}.yml 은 올리되 local/secret 은 제외) ###
+application-local.yml
+application-local.yaml
+application-local.properties
+application-secret*.yml
+application-secret*.yaml
+application-*-local.yml
+src/main/resources/application-local.*
+src/main/resources/application-secret*.*
+src/main/resources/**/secret*.yml
+
+### 키 / 인증서 (JWT RS256 전환, HTTPS, OAuth 등) ###
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.jks
+*.keystore
+src/main/resources/keys/
+secrets/
+
+### AWS / S3 브랜치 ###
+.aws/
+aws.properties
+### 로컬 파일 업로드(임시 저장소) — S3 로 옮기기 전 fallback ###
+/uploads/
+/upload/
+/files/
+/tmp/
+/temp/
+
+### 로그 ###
+*.log
+logs/
+log/
+*.log.*
+
+### 테스트 / 커버리지 리포트 ###
+/coverage/
+.jacoco/
+*.exec
+build/reports/
+build/test-results/
+
+### DB (H2 파일 모드로 쓸 경우) ###
+*.db
+*.mv.db
+*.trace.db
+/data/
+
+### Docker ###
+# 로컬 오버라이드만 제외하고 compose 본체는 커밋
+docker-compose.override.yml
+docker-compose.*.local.yml
+
+### OS ###
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+### 기타 ###
+# *.orig : merge 충돌 잔재 / hs_err_pid*, replay_pid* : JVM 크래시 덤프
+*.orig
+*.bak
+*.tmp
+*.pid
+hs_err_pid*.log
+replay_pid*.log

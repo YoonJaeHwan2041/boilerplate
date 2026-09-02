@@ -1,0 +1,34 @@
+# 로컬 개발용 PostgreSQL.
+#   docker compose up -d        # 백그라운드 기동
+#   docker compose ps           # 상태 확인 (healthy 될 때까지 대기)
+#   docker compose logs -f postgres
+#   docker compose down         # 중지 (데이터는 볼륨에 유지)
+#   docker compose down -v      # 중지 + 데이터 삭제
+#
+# 변수는 같은 디렉터리의 .env 에서 자동으로 읽는다(.env.example 참고).
+# 앱을 호스트에서 실행하면 접속 호스트는 localhost, 앱도 컨테이너로 띄우면 서비스명 'postgres'.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: boilerplate-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-boilerplate}
+      POSTGRES_USER: ${DB_USERNAME:-boilerplate}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-boilerplate}
+      TZ: Asia/Seoul
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - boilerplate-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-boilerplate} -d ${DB_NAME:-boilerplate}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  boilerplate-postgres-data:
+    name: boilerplate-postgres-data

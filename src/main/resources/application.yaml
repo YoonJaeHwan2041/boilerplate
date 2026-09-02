@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: boilerplate
+
+  # ===== DataSource (PostgreSQL) =====
+  # 로컬은 docker-compose.yml 의 postgres 컨테이너. 값은 환경변수로 덮어쓴다.
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/boilerplate}
+    username: ${DB_USERNAME:boilerplate}
+    password: ${DB_PASSWORD:boilerplate}
+    driver-class-name: org.postgresql.Driver
+
+  # ===== JPA / Hibernate =====
+  jpa:
+    hibernate:
+      # dev: update / 운영: validate (+ Flyway 등 마이그레이션 도구 권장)
+      ddl-auto: ${JPA_DDL_AUTO:update}
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc:
+          time_zone: Asia/Seoul
+
+# ===== JWT =====
+# secret 은 HS256 서명 키(원문 문자열). 최소 32바이트 이상이어야 하며,
+# 운영 환경에서는 반드시 환경변수 JWT_SECRET 로 주입한다(아래 값은 로컬 개발 기본값).
+jwt:
+  secret: ${JWT_SECRET:change-this-dev-only-secret-please-override-0123456789abcdef}
+  issuer: boilerplate
+  access-token-validity-seconds: 1800   # 30분

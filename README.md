@@ -15,10 +15,10 @@
 | `main` | 기본 Spring Security 설정 (CORS / CSRF / STATELESS / 인가 규칙) |
 | `jwt` | JWT 발급·검증 필터, `CustomUserDetails`, EntryPoint/AccessDeniedHandler |
 | `global-error` | `@RestControllerAdvice` 전역 예외 처리 + 공통 `ApiResponse` + `ErrorCode` 체계 |
-| `s3` | AWS S3 파일 업로드 (예정) |
+| `s3` | AWS S3 파일 업로드 (SDK v2) — 업로드 / 삭제 |
 | `full` | 위 브랜치를 전부 합친 최종본 |
 
-> 현재 작업 트리에는 `main` + `jwt` + `global-error` 가 함께 올라가 있고 서로 연동된 상태로 검증되어 있다.
+> 현재 작업 트리에는 `main` + `jwt` + `global-error` + `s3` 가 함께 올라가 있고 서로 연동된 상태로 검증되어 있다.
 
 ---
 
@@ -31,6 +31,7 @@
 | Build | Gradle (Kotlin DSL), Gradle Wrapper 9.7.1 |
 | JWT | `io.jsonwebtoken:jjwt` 0.12.6 (HS256) |
 | DB | PostgreSQL 16 (docker-compose) / 테스트는 인메모리 H2 |
+| Storage | AWS S3 (`software.amazon.awssdk:s3` 2.31) |
 | Docs | springdoc-openapi (Swagger UI) |
 | 기타 | Lombok, Bean Validation |
 
@@ -46,6 +47,9 @@ com.jelly.boilerplate
 │  ├─ AuthController.java             #   POST /api/v1/auth/login  (인메모리 유저)
 │  └─ MeController.java               #   GET  /api/v1/members/me, /admin-only
 │
+├─ file/                             # 데모 파일 API
+│  └─ FileController.java             #   POST/DELETE /api/v1/files
+│
 └─ global/
    ├─ exception/
    │  ├─ ExceptionCode.java           # 인터페이스: getCode() / getStatus() / getMessage()
@@ -55,18 +59,24 @@ com.jelly.boilerplate
    ├─ response/
    │  ├─ ApiResponse.java             # 공통 응답 봉투 { success, code, message, data }
    │  └─ code/
-   │     └─ AuthExceptionCode.java    # AUTH* 에러 코드 (implements ExceptionCode)
+   │     ├─ AuthExceptionCode.java    # AUTH* 에러 코드 (implements ExceptionCode)
+   │     └─ FileExceptionCode.java    # FILE* 에러 코드
    │
    ├─ jwt/
    │  ├─ JwtProperties.java           # @ConfigurationProperties("jwt")
    │  ├─ JwtProvider.java             # 토큰 생성 / 파싱 (jjwt 0.12.x)
    │  └─ JwtAuthenticationFilter.java # OncePerRequestFilter — Bearer 헤더 → SecurityContext
    │
-   └─ security/
-      ├─ SecurityConfig.java          # SecurityFilterChain, CORS, PasswordEncoder
-      ├─ CustomUserDetails.java       # SecurityContext 에 저장되는 principal
-      ├─ JwtAuthenticationEntryPoint.java  # 401 (인증 안 됨)
-      └─ JwtAccessDeniedHandler.java       # 403 (권한 부족)
+   ├─ security/
+   │  ├─ SecurityConfig.java          # SecurityFilterChain, CORS, PasswordEncoder
+   │  ├─ CustomUserDetails.java       # SecurityContext 에 저장되는 principal
+   │  ├─ JwtAuthenticationEntryPoint.java  # 401 (인증 안 됨)
+   │  └─ JwtAccessDeniedHandler.java       # 403 (권한 부족)
+   │
+   └─ s3/
+      ├─ S3Properties.java            # @ConfigurationProperties("aws.s3")
+      ├─ S3Config.java                # S3Client / S3Presigner 빈
+      └─ S3Uploader.java             # 업로드 / 삭제
 ```
 
 ---
@@ -134,6 +144,8 @@ docker compose ps             # STATUS 가 healthy 될 때까지 대기
 | `POST` | `/api/v1/auth/login` | 불필요 | 로그인 → Access Token 발급 |
 | `GET` | `/api/v1/members/me` | 필요 | 내 정보 (토큰 principal 반환) |
 | `GET` | `/api/v1/members/admin-only` | `ROLE_ADMIN` | 메서드 시큐리티(`@PreAuthorize`) 확인용 |
+| `POST` | `/api/v1/files` | 필요 | `multipart/form-data` (`file`, `dir?`) → S3 업로드 |
+| `DELETE` | `/api/v1/files?key=...` | 필요 | S3 객체 삭제 |
 | `GET` | `/swagger-ui.html` | 불필요 | API 문서 |
 
 ### 예시
@@ -248,6 +260,60 @@ GlobalExceptionHandler (@RestControllerAdvice)
 
 ---
 
+## S3 파일 업로드
+
+### 설정 (`aws.s3.*`)
+
+| 키 | 환경변수 | 설명 |
+|----|----------|------|
+| `region` | `AWS_REGION` | 예: `ap-northeast-2` |
+| `bucket` | `AWS_S3_BUCKET` | 버킷 이름 |
+| `access-key` / `secret-key` | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | **비우면** DefaultCredentialsProvider (env → `~/.aws` → IAM Role) |
+| `endpoint` | `AWS_S3_ENDPOINT` | LocalStack/MinIO 주소. 지정 시 path-style 강제 |
+| `path-style-access` | `AWS_S3_PATH_STYLE` | virtual-host 대신 path-style 사용 |
+
+### 동작
+
+- 저장 키: `<dir>/yyyy/MM/dd/<uuid><.ext>` — 원본 파일명은 키에 안 쓴다(한글/공백/중복/경로조작 방지).
+  원본 파일명이 필요하면 DB에 별도 저장.
+- 업로드 응답: `{ "key": "...", "url": "..." }` — `key` 를 엔티티에 저장하고, 화면에는 `url` 사용
+  (**공개 버킷 기준**. 비공개 버킷이면 presigned URL 발급 로직을 추가해야 함).
+- 업로드 용량 초과(`spring.servlet.multipart.max-file-size`, 기본 10MB) → `413` `FILE002`.
+
+### LocalStack 으로 로컬 테스트
+
+```bash
+docker run -d -p 4566:4566 localstack/localstack
+aws --endpoint-url=http://localhost:4566 s3 mb s3://boilerplate-local
+# .env
+AWS_S3_ENDPOINT=http://localhost:4566
+AWS_S3_PATH_STYLE=true
+AWS_ACCESS_KEY_ID=test
+AWS_SECRET_ACCESS_KEY=test
+```
+
+### 예시
+
+```bash
+TOKEN=... # 로그인해서 받은 accessToken
+curl -s -X POST http://localhost:8080/api/v1/files \
+  -H "Authorization: Bearer $TOKEN" \
+  -F 'file=@/path/to/img.png' -F 'dir=profile'
+# → { "success": true, "code": "0000", "data": { "key": "profile/2026/09/02/ab12...png", "url": "https://..." } }
+```
+
+### FILE 에러 코드
+
+| 코드 | HTTP | 의미 |
+|------|------|------|
+| `FILE000` | 400 | 업로드할 파일 없음 |
+| `FILE001` | 400 | 허용되지 않은 파일 형식 |
+| `FILE002` | 413 | 파일 크기 초과 |
+| `FILE100` | 500 | 업로드 실패 (S3) |
+| `FILE101` | 500 | 삭제 실패 (S3) |
+
+---
+
 ## 데모 코드 → 실제 코드로 바꿀 부분
 
 - `auth/AuthController` 의 **인메모리 유저 맵** → `MemberRepository.findByUsername()` 조회 +
@@ -255,4 +321,5 @@ GlobalExceptionHandler (@RestControllerAdvice)
 - DB 스키마 관리: 지금은 `ddl-auto: update`. 운영 전환 시 `validate` + Flyway/Liquibase 도입 권장
 - `GlobalExceptionHandler` 의 하드코딩된 `"COMMON_INVALID_INPUT"` / `"COMMON_INTERNAL_ERROR"` 문자열 →
   `CommonExceptionCode` enum 을 만들어 상수로 교체
+- `S3Uploader` 에 파일 형식/확장자 화이트리스트 검증(`FILE001`) 추가 — 지금은 크기만 제한
 - 리프레시 토큰 / 토큰 재발급 엔드포인트는 아직 없음 (필요 시 추가)

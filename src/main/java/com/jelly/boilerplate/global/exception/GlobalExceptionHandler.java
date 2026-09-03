@@ -2,6 +2,7 @@ package com.jelly.boilerplate.global.exception;
 
 import com.jelly.boilerplate.global.response.ApiResponse;
 import com.jelly.boilerplate.global.response.code.AuthExceptionCode;
+import com.jelly.boilerplate.global.response.code.FileExceptionCode;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -10,6 +11,7 @@ import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 @Slf4j
 @RestControllerAdvice
@@ -39,6 +41,17 @@ public class GlobalExceptionHandler {
         log.warn("[VALIDATION] {}", message);
         return ResponseEntity.badRequest()
                 .body(ApiResponse.error(message, "COMMON_INVALID_INPUT"));
+    }
+
+    // ============================================================
+    // 2-1) 업로드 용량 초과 (multipart max-file-size)
+    // ============================================================
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMaxUploadSize(MaxUploadSizeExceededException e) {
+        FileExceptionCode ec = FileExceptionCode.FILE_TOO_LARGE;
+        log.warn("[{}] {}", ec.getCode(), e.getMessage());
+        return ResponseEntity.status(ec.getStatus())
+                .body(ApiResponse.error(ec.getMessage(), ec.getCode()));
     }
 
     // ============================================================

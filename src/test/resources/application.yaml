@@ -1,4 +1,4 @@
-# 테스트 전용 설정 — 도커/PostgreSQL 없이 인메모리 H2 로 돈다.
+# 테스트 전용 설정 — 도커/PostgreSQL/AWS 없이 인메모리로 돈다.
 # (src/test/resources 가 클래스패스에서 우선하므로 main 의 application.yaml 을 덮어쓴다.)
 spring:
   datasource:
@@ -17,3 +17,9 @@ jwt:
   secret: test-only-secret-0123456789-0123456789-0123456789-0123456789
   issuer: boilerplate
   access-token-validity-seconds: 1800
+
+# S3 클라이언트 빈은 지연 평가라 실제 자격증명 없이도 컨텍스트가 뜬다(region/bucket 만 있으면 됨).
+aws:
+  s3:
+    region: ap-northeast-2
+    bucket: test-bucket

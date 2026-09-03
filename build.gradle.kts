@@ -17,6 +17,12 @@ repositories {
 	mavenCentral()
 }
 
+dependencyManagement {
+	imports {
+		mavenBom("software.amazon.awssdk:bom:2.31.6")
+	}
+}
+
 dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
 	implementation("org.springframework.boot:spring-boot-starter-security")
@@ -40,6 +46,10 @@ dependencies {
 	runtimeOnly("org.postgresql:postgresql")
 	// 테스트는 도커 없이 돌 수 있도록 인메모리 H2 (src/test/resources/application.yaml 에서 사용)
 	testRuntimeOnly("com.h2database:h2")
+
+	// AWS S3 (SDK v2). apache-client 는 동기 HTTP 구현체 — 없으면 런타임에 에러
+	implementation("software.amazon.awssdk:s3")
+	implementation("software.amazon.awssdk:apache-client")
 }
 
 tasks.withType<Test> {

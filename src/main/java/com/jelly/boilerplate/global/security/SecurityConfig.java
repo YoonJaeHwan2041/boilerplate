@@ -23,7 +23,7 @@ import java.util.List;
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity // @PreAuthorize("hasRole('ADMIN')") 등을 메서드에 붙일 수 있게 함
-@EnableConfigurationProperties(JwtProperties.class) // jwt.* → JwtProperties 바인딩 + 빈 등록
+@EnableConfigurationProperties({JwtProperties.class, AuthCookieProperties.class}) // jwt.* / app.cookie.* 바인딩
 @RequiredArgsConstructor
 public class SecurityConfig {
 

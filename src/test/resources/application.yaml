@@ -17,6 +17,16 @@ jwt:
   secret: test-only-secret-0123456789-0123456789-0123456789-0123456789
   issuer: boilerplate
   access-token-validity-seconds: 1800
+  refresh-secret: test-only-REFRESH-secret-0123456789-0123456789-0123456789
+  refresh-token-validity-seconds: 1209600
+  refresh-rotation: false
+  refresh-cleanup-cron: "0 0 4 * * *"
+
+app:
+  cookie:
+    secure: false
+    same-site: Lax
+    path: /api/v1/auth
 
 # S3 클라이언트 빈은 지연 평가라 실제 자격증명 없이도 컨텍스트가 뜬다(region/bucket 만 있으면 됨).
 aws:

@@ -12,14 +12,15 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
- * JWT(Access Token) 생성 / 파싱 담당. (jjwt 0.12.x API)
+ * JWT 생성 / 파싱 담당. (jjwt 0.12.x API)
  *
- * <p>토큰 payload 구성
+ * <p>Access / Refresh 를 <b>서로 다른 키</b>로 서명한다. Access 키가 노출돼도 Refresh 는 안전.
+ *
+ * <p>payload 구성 (Access·Refresh 동일)
  * <ul>
  *   <li>{@code iss} : 발급자 (jwt.issuer)</li>
  *   <li>{@code sub} : 회원 식별자(userId)</li>
- *   <li>{@code username} : 로그인 아이디 (커스텀 클레임)</li>
- *   <li>{@code role} : 권한 문자열 "ROLE_USER" 등 (커스텀 클레임)</li>
+ *   <li>{@code username}, {@code role} : 커스텀 클레임</li>
  *   <li>{@code iat}, {@code exp}</li>
  * </ul>
  */
@@ -29,38 +30,63 @@ public class JwtProvider {
 
     private final JwtProperties properties;
 
-    /** HS256 서명 키. 원문 secret 을 바이트로 변환해 생성 (최소 32바이트 필요) */
-    private SecretKey key;
+    private SecretKey accessKey;
+    private SecretKey refreshKey;
 
     @PostConstruct
     void init() {
-        this.key = Keys.hmacShaKeyFor(properties.secret().getBytes(StandardCharsets.UTF_8));
+        this.accessKey = Keys.hmacShaKeyFor(properties.secret().getBytes(StandardCharsets.UTF_8));
+        this.refreshKey = Keys.hmacShaKeyFor(properties.refreshSecret().getBytes(StandardCharsets.UTF_8));
     }
 
-    /** 로그인 성공 시 호출. Access Token 문자열을 만든다. */
-    public String createAccessToken(Long userId, String username, String role) {
-        Instant now = Instant.now();
-        Instant expiry = now.plusSeconds(properties.accessTokenValiditySeconds());
+    // ============================================================
+    // 생성
+    // ============================================================
 
+    /** 로그인 성공 시. API 호출용 Access Token. */
+    public String createAccessToken(Long userId, String username, String role) {
+        return build(userId, username, role, properties.accessTokenValiditySeconds(), accessKey);
+    }
+
+    /** 로그인 성공 시. Access 재발급용 Refresh Token (HttpOnly 쿠키에 담김). */
+    public String createRefreshToken(Long userId, String username, String role) {
+        return build(userId, username, role, properties.refreshTokenValiditySeconds(), refreshKey);
+    }
+
+    private String build(Long userId, String username, String role, long validitySeconds, SecretKey key) {
+        Instant now = Instant.now();
         return Jwts.builder()
             .issuer(properties.issuer())
             .subject(String.valueOf(userId))
             .claim("username", username)
             .claim("role", role)
             .issuedAt(Date.from(now))
-            .expiration(Date.from(expiry))
+            .expiration(Date.from(now.plusSeconds(validitySeconds)))
             .signWith(key)
             .compact();
     }
 
+    // ============================================================
+    // 파싱 / 검증
+    // ============================================================
+
     /**
-     * 토큰을 검증하고 클레임을 반환한다.
+     * Access Token 검증 + 클레임 반환.
      *
      * @throws io.jsonwebtoken.ExpiredJwtException 만료
-     * @throws io.jsonwebtoken.JwtException 서명 불일치 / 형식 오류 / issuer 불일치 등
-     * @throws IllegalArgumentException 토큰이 null 또는 빈 문자열
+     * @throws io.jsonwebtoken.JwtException 서명 불일치 / 형식 오류 / issuer 불일치
+     * @throws IllegalArgumentException null / 빈 문자열
      */
     public Claims parse(String token) {
+        return parseWith(token, accessKey);
+    }
+
+    /** Refresh Token 검증 + 클레임 반환. 예외 종류는 {@link #parse} 와 동일. */
+    public Claims parseRefresh(String token) {
+        return parseWith(token, refreshKey);
+    }
+
+    private Claims parseWith(String token, SecretKey key) {
         return Jwts.parser()
             .verifyWith(key)
             .requireIssuer(properties.issuer())

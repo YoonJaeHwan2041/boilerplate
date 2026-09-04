@@ -7,14 +7,20 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *
  * <pre>
  * jwt:
- *   secret: ...                       # HS256 서명 키 (원문 문자열, 최소 32바이트)
- *   issuer: boilerplate               # 토큰 발급자(iss). 검증 시에도 사용
- *   access-token-validity-seconds: 1800
+ *   secret: ...                          # Access Token HS256 서명 키 (원문, 최소 32바이트)
+ *   issuer: boilerplate                  # 토큰 발급자(iss). 검증 시에도 사용
+ *   access-token-validity-seconds: 1800  # Access 만료 (30분)
+ *   refresh-secret: ...                  # Refresh Token 전용 서명 키 (Access 와 다른 키)
+ *   refresh-token-validity-seconds: 1209600  # Refresh 만료 (14일)
+ *   refresh-rotation: false              # /refresh 때 Refresh 도 재발급할지 (기본 off)
  * </pre>
  */
 @ConfigurationProperties(prefix = "jwt")
 public record JwtProperties(
     String secret,
     String issuer,
-    long accessTokenValiditySeconds
+    long accessTokenValiditySeconds,
+    String refreshSecret,
+    long refreshTokenValiditySeconds,
+    boolean refreshRotation
 ) {}

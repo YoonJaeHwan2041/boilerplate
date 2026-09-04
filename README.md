@@ -14,11 +14,12 @@
 |--------|------|
 | `main` | 기본 Spring Security 설정 (CORS / CSRF / STATELESS / 인가 규칙) |
 | `jwt` | JWT 발급·검증 필터, `CustomUserDetails`, EntryPoint/AccessDeniedHandler |
+| `jwt-refresh` | Access(body) + Refresh(HttpOnly 쿠키 + DB 저장) 하이브리드, `/refresh` · `/logout` |
 | `global-error` | `@RestControllerAdvice` 전역 예외 처리 + 공통 `ApiResponse` + `ErrorCode` 체계 |
 | `s3` | AWS S3 파일 업로드 (SDK v2) — 업로드 / 삭제 |
 | `full` | 위 브랜치를 전부 합친 최종본 |
 
-> 현재 작업 트리에는 `main` + `jwt` + `global-error` + `s3` 가 함께 올라가 있고 서로 연동된 상태로 검증되어 있다.
+> 현재 작업 트리에는 `main` + `jwt` + `jwt-refresh` + `global-error` + `s3` 가 함께 올라가 있고 서로 연동된 상태로 검증되어 있다.
 
 ---
 
@@ -29,7 +30,7 @@
 | Language | Java 25 |
 | Framework | Spring Boot 4.1.1 (Spring Security 7, Jackson 3) |
 | Build | Gradle (Kotlin DSL), Gradle Wrapper 9.7.1 |
-| JWT | `io.jsonwebtoken:jjwt` 0.12.6 (HS256) |
+| JWT | `io.jsonwebtoken:jjwt` 0.12.6 (HS256). Access(헤더) + Refresh(HttpOnly 쿠키 + DB) |
 | DB | PostgreSQL 16 (docker-compose) / 테스트는 인메모리 H2 |
 | Storage | AWS S3 (`software.amazon.awssdk:s3` 2.31) |
 | Docs | springdoc-openapi (Swagger UI) |
@@ -44,8 +45,13 @@ com.jelly.boilerplate
 ├─ BoilerplateApplication.java
 │
 ├─ auth/                              # 데모 인증 API (실제 프로젝트에선 domain/* 로 교체)
-│  ├─ AuthController.java             #   POST /api/v1/auth/login  (인메모리 유저)
-│  └─ MeController.java               #   GET  /api/v1/members/me, /admin-only
+│  ├─ AuthController.java             #   POST /api/v1/auth/login · /refresh · /logout
+│  ├─ MeController.java               #   GET  /api/v1/members/me, /admin-only
+│  ├─ RefreshTokenService.java        #   Refresh 저장/대조/삭제 (SHA-256 해시)
+│  ├─ RefreshTokenCleanupScheduler.java  #   만료된 Refresh 행 매일 정리
+│  └─ domain/
+│     ├─ RefreshToken.java            #   @Entity  (user_id 1명 = 1행)
+│     └─ RefreshTokenRepository.java
 │
 ├─ file/                             # 데모 파일 API
 │  └─ FileController.java             #   POST/DELETE /api/v1/files
@@ -63,15 +69,19 @@ com.jelly.boilerplate
    │     └─ FileExceptionCode.java    # FILE* 에러 코드
    │
    ├─ jwt/
-   │  ├─ JwtProperties.java           # @ConfigurationProperties("jwt")
-   │  ├─ JwtProvider.java             # 토큰 생성 / 파싱 (jjwt 0.12.x)
+   │  ├─ JwtProperties.java           # @ConfigurationProperties("jwt")  Access/Refresh 키·만료·회전
+   │  ├─ JwtProvider.java             # Access/Refresh 생성·파싱 (서로 다른 키, jjwt 0.12.x)
    │  └─ JwtAuthenticationFilter.java # OncePerRequestFilter — Bearer 헤더 → SecurityContext
    │
    ├─ security/
    │  ├─ SecurityConfig.java          # SecurityFilterChain, CORS, PasswordEncoder
+   │  ├─ AuthCookieProperties.java    # @ConfigurationProperties("app.cookie")  secure/sameSite/path
    │  ├─ CustomUserDetails.java       # SecurityContext 에 저장되는 principal
    │  ├─ JwtAuthenticationEntryPoint.java  # 401 (인증 안 됨)
    │  └─ JwtAccessDeniedHandler.java       # 403 (권한 부족)
+   │
+   ├─ util/
+   │  └─ CookieUtil.java              # Refresh 쿠키 생성/삭제 (ResponseCookie)
    │
    └─ s3/
       ├─ S3Properties.java            # @ConfigurationProperties("aws.s3")
@@ -117,7 +127,9 @@ docker compose ps             # STATUS 가 healthy 될 때까지 대기
 
 | 변수 | 사용처 | 설명 |
 |------|--------|------|
-| `JWT_SECRET` | 앱 | HS256 서명 키(원문, **최소 32바이트**). 운영에선 반드시 주입 |
+| `JWT_SECRET` / `JWT_REFRESH_SECRET` | 앱 | HS256 서명 키(원문, **최소 32바이트**). Access·Refresh 는 서로 다른 키. 운영에선 반드시 주입 |
+| `JWT_REFRESH_ROTATION` | 앱 | `/refresh` 때 Refresh 도 재발급할지 (기본 `false`) |
+| `COOKIE_SECURE` / `COOKIE_SAME_SITE` / `COOKIE_PATH` | 앱 | Refresh 쿠키 속성. 로컬은 `false` / `Lax` / `/api/v1/auth` |
 | `DB_NAME` / `DB_USERNAME` / `DB_PASSWORD` / `DB_PORT` | docker compose | postgres 컨테이너 생성 값 |
 | `DB_URL` | 앱 | JDBC 접속 URL (앱도 컨테이너로 띄우면 `localhost` → `postgres`) |
 | `JPA_DDL_AUTO` | 앱 | `update`(dev) / `validate`(운영) |
@@ -141,7 +153,9 @@ docker compose ps             # STATUS 가 healthy 될 때까지 대기
 
 | Method | Path | 인증 | 설명 |
 |--------|------|------|------|
-| `POST` | `/api/v1/auth/login` | 불필요 | 로그인 → Access Token 발급 |
+| `POST` | `/api/v1/auth/login` | 불필요 | 로그인 → Access(body) + Refresh(HttpOnly 쿠키) |
+| `POST` | `/api/v1/auth/refresh` | 쿠키 | Refresh 쿠키 → 새 Access 발급 |
+| `POST` | `/api/v1/auth/logout` | 쿠키 | 서버의 Refresh 삭제 + 쿠키 제거 |
 | `GET` | `/api/v1/members/me` | 필요 | 내 정보 (토큰 principal 반환) |
 | `GET` | `/api/v1/members/admin-only` | `ROLE_ADMIN` | 메서드 시큐리티(`@PreAuthorize`) 확인용 |
 | `POST` | `/api/v1/files` | 필요 | `multipart/form-data` (`file`, `dir?`) → S3 업로드 |
@@ -151,17 +165,22 @@ docker compose ps             # STATUS 가 healthy 될 때까지 대기
 ### 예시
 
 ```bash
-# 1) 로그인
-curl -s -X POST http://localhost:8080/api/v1/auth/login \
+B=http://localhost:8080
+
+# 1) 로그인 — Access 는 body, Refresh 는 Set-Cookie 로 옴 (-c 로 쿠키 저장)
+curl -s -c cookies.txt -X POST $B/api/v1/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"user","password":"password"}'
-# → { "success": true, "code": "0000", "message": "",
-#     "data": { "accessToken": "eyJ...", "tokenType": "Bearer" } }
+# → data.accessToken 저장.  cookies.txt 에 refreshToken 쿠키 저장됨
 
-# 2) 토큰으로 보호된 API 호출
-curl -s http://localhost:8080/api/v1/members/me \
-  -H 'Authorization: Bearer eyJ...'
-# → { "success": true, "code": "0000", "data": { "id":1, "username":"user", "role":"ROLE_USER" } }
+# 2) Access 로 보호된 API
+curl -s $B/api/v1/members/me -H 'Authorization: Bearer <accessToken>'
+
+# 3) Access 만료 시 재발급 — 쿠키 자동 전송 (-b), 새 Access 를 받음
+curl -s -b cookies.txt -X POST $B/api/v1/auth/refresh
+
+# 4) 로그아웃 — 서버의 Refresh 삭제 + 쿠키 만료
+curl -s -b cookies.txt -c cookies.txt -X POST $B/api/v1/auth/logout
 ```
 
 ### 동작 검증표 (구현 완료)
@@ -175,6 +194,10 @@ curl -s http://localhost:8080/api/v1/members/me \
 | 만료 토큰 | 401 | `AUTH202` |
 | 위조/깨진 토큰 | 401 | `AUTH201` |
 | 권한 부족 (`ROLE_USER` → admin API) | 403 | `AUTH100` |
+| 쿠키로 `/refresh` | 200 | `0000` (새 Access) |
+| 쿠키 없이 `/refresh` | 401 | `AUTH200` |
+| 위조 Refresh 쿠키 | 401 | `AUTH201` |
+| 로그아웃 후 같은(미만료) Refresh 재사용 | 401 | `AUTH201` (DB 행이 삭제돼 대조 실패) |
 
 ---
 
@@ -251,12 +274,110 @@ GlobalExceptionHandler (@RestControllerAdvice)
 
 | 설정 | 값 | 이유 |
 |------|-----|------|
-| CSRF | `disable` | 토큰을 헤더로 전송 → CSRF 공격 성립 안 함 |
+| CSRF | `disable` | 아래 [CSRF](#csrf) 참고 |
 | Session | `STATELESS` | 서버가 세션을 만들지 않음 |
 | CORS | `localhost:3000`, `localhost:3001` 허용, `allowCredentials(true)` | 로컬 프론트 개발 서버 |
 | 공개 경로 | `/api/v1/auth/**`, `/swagger-ui/**`, `/v3/api-docs/**` | 나머지는 유효한 JWT 필요 |
 | 필터 | `JwtAuthenticationFilter` 를 `UsernamePasswordAuthenticationFilter` 앞에 추가 | 토큰 먼저 검사 |
 | 메서드 시큐리티 | `@EnableMethodSecurity` | `@PreAuthorize("hasRole('ADMIN')")` 사용 가능 |
+
+---
+
+## Refresh Token (하이브리드)
+
+### 왜 이렇게
+
+토큰 하나로는 **"편함(재로그인 안 함)"** 과 **"안전(탈취 시 짧게 만료·즉시 무효화)"** 을 동시에 못 잡는다.
+→ 역할을 둘로 나눈다.
+
+| | Access Token | Refresh Token |
+|--|--------------|---------------|
+| 용도 | 매 API 호출 신분증 | Access **재발급**받을 때만 |
+| 수명 | 짧다 (30분) | 길다 (14일) |
+| 전송 | `Authorization: Bearer` 헤더 | HttpOnly 쿠키 (JS 접근 불가) |
+| 클라 저장 | localStorage / 메모리 | 브라우저가 쿠키로 관리 |
+| 서버 저장 | 안 함 (stateless) | **DB `refresh_token` 테이블에 SHA-256 해시로** |
+
+서버가 Refresh 를 저장하는 이유 = **로그아웃 / 비밀번호 변경 시 삭제하여 재발급을 끊기 위해서**.
+(Access 하나만 쓸 땐 만료 전 취소가 불가능했다.)
+
+### 흐름
+
+```
+로그인    POST /login  → Access(body) + Refresh(Set-Cookie HttpOnly) + DB 저장
+API 호출  Authorization: Bearer <Access>
+Access 만료(401 AUTH202)
+  → POST /refresh  (쿠키 자동 전송, body 없음)
+      · 쿠키 Refresh 서명·만료 검증
+      · DB의 해시와 대조 (없으면/불일치면 401 → 로그아웃됐거나 폐기됨)
+      · 새 Access 발급 (회전 ON 이면 Refresh 도 교체)
+  → 클라가 실패한 요청 재시도 (사용자는 못 느낌)
+로그아웃  POST /logout → DB의 Refresh 삭제 + 빈 쿠키(Max-Age=0)
+Refresh 만료 → /refresh 도 401 → 진짜 재로그인
+```
+
+### 설정 (`jwt.*`, `app.cookie.*`)
+
+| 키 | 기본값 | 설명 |
+|----|--------|------|
+| `jwt.refresh-secret` | (더미) | Refresh 전용 서명 키. **Access 키와 달라야** 함 |
+| `jwt.refresh-token-validity-seconds` | `1209600` (14일) | Refresh 만료 |
+| `jwt.refresh-rotation` | `false` | `/refresh` 때 Refresh 도 재발급할지. 켜면 탈취 탐지 가능하지만 DB 쓰기↑ + 동시요청 레이스 대비 필요 |
+| `jwt.refresh-cleanup-cron` | 매일 04:00 | 만료된 `refresh_token` 행 정리 (RDB 는 TTL 자동삭제 없음) |
+| `app.cookie.secure` | `false` | 운영(HTTPS) `true` |
+| `app.cookie.same-site` | `Lax` | 아래 [CSRF](#csrf) 참고 |
+| `app.cookie.path` | `/api/v1/auth` | Refresh 쿠키가 실릴 경로 (다른 요청엔 안 실림) |
+
+### 설계 결정 (이 보일러플레이트)
+
+- **저장소: RDB(JPA)** — 인프라 0. 트래픽 커지면 Redis 로 교체(TTL 자동, `RefreshTokenService` 만 갈아끼움)
+- **키: `user_id` 1개 (deviceId 없음)** — 한 계정은 한 곳에서만 로그인 유지. 다른 기기 로그인 시 기존 Refresh 는 무효화됨. "기기별 세션"이 필요하면 `device_id` 컬럼 추가
+- **회전: OFF** — 옵션(`jwt.refresh-rotation`)으로만 존재. 금융·관리자처럼 탈취 탐지가 중요하면 `true`
+- **Refresh 토큰이 스스로 `username`·`role` 을 claim 으로 들고 있음** — 재발급 때 DB 유저 조회 없이 새 Access 생성 (데모 특성). 실제 프로젝트는 `/refresh` 에서 최신 유저 정보를 DB 에서 읽는 게 정확
+
+---
+
+## CSRF
+
+현재 `csrf.disable()`. 이유와, 언제 다시 켜야 하는지.
+
+### 왜 꺼도 되나 (지금 구성)
+
+- **Access(API 호출)**: `Authorization` 헤더로 전송 → 브라우저가 자동으로 안 실어줌 → 다른 사이트가 남의 토큰을 못 넣음 → **CSRF 불가**
+- **Refresh 쿠키**: `SameSite=Lax` + `Path=/api/v1/auth` → 다른 사이트에서 시작된 요청엔 쿠키가 거의 안 실림. 쿠키를 쓰는 요청도 `/refresh`·`/logout` 둘뿐이고, 강제 `/refresh` 는 응답을 못 읽어 무해, 강제 `/logout` 은 성가심 수준
+
+→ **프론트·백이 같은 site 이거나 로컬(http)이면 `disable` 유지로 충분하다.**
+
+### 언제 다시 켜야 하나
+
+**프론트와 백엔드를 완전히 다른 도메인 + HTTPS 로 나눌 때** (예: `front.example.com` ↔ `api.example.com`, 또는 프론트를 Vercel 등에).
+
+이 경우 쿠키가 cross-site 로 오가야 하므로:
+
+1. `app.cookie.same-site` → `None`, `app.cookie.secure` → `true` (HTTPS 필수)
+2. cross-site 쿠키 자동 전송 = CSRF 노출 ↑ → **`/refresh`·`/logout` 에만** CSRF 토큰 추가:
+
+```java
+http.csrf(csrf -> csrf
+    .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+    .ignoringRequestMatchers(
+        "/api/v1/auth/login",
+        // Authorization 헤더로 인증하는 요청은 CSRF 안전 → 제외
+        request -> request.getHeader("Authorization") != null
+    )
+);
+```
+
+> 헤더(`Authorization`)로 인증하는 API 는 **절대 CSRF 토큰을 요구하면 안 된다** — 안전한데 프론트만 불편해진다.
+
+### 도메인 형태별 정리
+
+| 배포 형태 | `same-site` | `secure` | CSRF |
+|-----------|-------------|----------|------|
+| 로컬 (`localhost:3000` ↔ `:8080`) | `Lax` | `false` | disable |
+| 한 서버 / 리버스 프록시 한 주소 | `Lax` | `false`(http) / `true`(https) | disable |
+| 서브도메인 (`app.com` ↔ `api.app.com`) | `Lax` | `true` | disable |
+| **완전히 다른 도메인** | `None` | `true` | `/refresh`·`/logout` 에 토큰 |
 
 ---
 
@@ -318,8 +439,12 @@ curl -s -X POST http://localhost:8080/api/v1/files \
 
 - `auth/AuthController` 의 **인메모리 유저 맵** → `MemberRepository.findByUsername()` 조회 +
   엔티티의 BCrypt 해시 비밀번호와 `passwordEncoder.matches()` 비교로 교체
+- `/refresh` 에서 새 Access 를 만들 때 지금은 **Refresh claim** 의 `username`·`role` 을 그대로 씀 →
+  실제로는 `MemberRepository` 에서 최신 유저 정보를 읽어 반영 (권한 변경·정지 즉시 반영)
 - DB 스키마 관리: 지금은 `ddl-auto: update`. 운영 전환 시 `validate` + Flyway/Liquibase 도입 권장
 - `GlobalExceptionHandler` 의 하드코딩된 `"COMMON_INVALID_INPUT"` / `"COMMON_INTERNAL_ERROR"` 문자열 →
   `CommonExceptionCode` enum 을 만들어 상수로 교체
 - `S3Uploader` 에 파일 형식/확장자 화이트리스트 검증(`FILE001`) 추가 — 지금은 크기만 제한
-- 리프레시 토큰 / 토큰 재발급 엔드포인트는 아직 없음 (필요 시 추가)
+- 트래픽·다중 인스턴스면 `RefreshTokenService` 를 **Redis 구현**으로 교체 (TTL 자동, 청소 스케줄러 불필요)
+- "여러 기기 동시 로그인 / 기기별 로그아웃" 필요하면 `RefreshToken` 에 `device_id` 컬럼 추가
+- 완전히 다른 도메인 + HTTPS 배포 시: `app.cookie.same-site=None`, `secure=true` + [CSRF](#csrf) 토큰

@@ -3,6 +3,8 @@ package com.jelly.boilerplate.global.exception;
 import com.jelly.boilerplate.global.response.ApiResponse;
 import com.jelly.boilerplate.global.response.code.AuthExceptionCode;
 import com.jelly.boilerplate.global.response.code.FileExceptionCode;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtException;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -49,6 +51,26 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<ApiResponse<Void>> handleMaxUploadSize(MaxUploadSizeExceededException e) {
         FileExceptionCode ec = FileExceptionCode.FILE_TOO_LARGE;
+        log.warn("[{}] {}", ec.getCode(), e.getMessage());
+        return ResponseEntity.status(ec.getStatus())
+                .body(ApiResponse.error(ec.getMessage(), ec.getCode()));
+    }
+
+    // ============================================================
+    // 2-2) JWT 파싱 예외 (주로 /refresh 에서 쿠키의 Refresh Token 검증 실패)
+    //      필터 경로는 JwtAuthenticationFilter 가 자체 처리하므로 여기로 안 옴.
+    // ============================================================
+    @ExceptionHandler(ExpiredJwtException.class)
+    public ResponseEntity<ApiResponse<Void>> handleExpiredJwt(ExpiredJwtException e) {
+        AuthExceptionCode ec = AuthExceptionCode.TOKEN_EXPIRED;
+        log.warn("[{}] {}", ec.getCode(), e.getMessage());
+        return ResponseEntity.status(ec.getStatus())
+                .body(ApiResponse.error(ec.getMessage(), ec.getCode()));
+    }
+
+    @ExceptionHandler(JwtException.class)
+    public ResponseEntity<ApiResponse<Void>> handleJwt(JwtException e) {
+        AuthExceptionCode ec = AuthExceptionCode.TOKEN_INVALID;
         log.warn("[{}] {}", ec.getCode(), e.getMessage());
         return ResponseEntity.status(ec.getStatus())
                 .body(ApiResponse.error(ec.getMessage(), ec.getCode()));

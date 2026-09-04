@@ -30,11 +30,24 @@ spring:
 
 # ===== JWT =====
 # secret 은 HS256 서명 키(원문 문자열). 최소 32바이트 이상이어야 하며,
-# 운영 환경에서는 반드시 환경변수 JWT_SECRET 로 주입한다(아래 값은 로컬 개발 기본값).
+# 운영 환경에서는 반드시 환경변수로 주입한다(아래 값은 로컬 개발 기본값).
 jwt:
   secret: ${JWT_SECRET:change-this-dev-only-secret-please-override-0123456789abcdef}
   issuer: boilerplate
-  access-token-validity-seconds: 1800   # 30분
+  access-token-validity-seconds: 1800          # Access 만료 (30분)
+  refresh-secret: ${JWT_REFRESH_SECRET:change-this-dev-only-REFRESH-secret-please-override-0123456789}
+  refresh-token-validity-seconds: 1209600      # Refresh 만료 (14일)
+  refresh-rotation: ${JWT_REFRESH_ROTATION:false}   # /refresh 때 Refresh 도 재발급할지
+  refresh-cleanup-cron: "0 0 4 * * *"          # 만료된 Refresh 행 정리 (매일 04:00)
+
+# ===== 쿠키 (Refresh Token 담는 쿠키) =====
+# 로컬(http) 이거나 프론트·백이 같은 host 면 그대로 두면 된다.
+# 완전히 다른 도메인 + HTTPS 로 나눌 경우: secure=true, same-site=None
+app:
+  cookie:
+    secure: ${COOKIE_SECURE:false}
+    same-site: ${COOKIE_SAME_SITE:Lax}
+    path: ${COOKIE_PATH:/api/v1/auth}
 
 # ===== AWS S3 =====
 # access-key / secret-key 를 비워두면 DefaultCredentialsProvider
